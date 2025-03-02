@@ -14,7 +14,27 @@ const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 
 createInertiaApp({
     title: (title) => `${title} - ${appName}`,
-    resolve: (name) => resolvePageComponent(`./pages/${name}.tsx`, import.meta.glob('./pages/**/*.tsx')),
+    resolve: (name) => {
+        /**
+         * This is a special case for the Rapid CMS package.
+         * It allows us to load the page components from the Rapid CMS package.
+         *
+         * WARNING: This is required don't change.
+         */
+
+        if (name.includes('rapid-cms')) {
+            return resolvePageComponent(
+                `../../vendor/rapid-cms/core/resources/js/pages/react/${name.replaceAll('rapid-cms::', '')}.tsx`,
+                import.meta.glob('../../vendor/rapid-cms/core/resources/js/pages/react/**/*.tsx'),
+            );
+        }
+
+        /**
+         * This is the project related code and can be updated as needed.
+         */
+        return resolvePageComponent(`./pages/${name}.tsx`, import.meta.glob('./pages/**/*.tsx'));
+    },
+    // resolve: (name) => resolvePageComponent(`./pages/${name}.tsx`, import.meta.glob('./pages/**/*.tsx')),
     setup({ el, App, props }) {
         const root = createRoot(el);
 
