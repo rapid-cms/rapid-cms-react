@@ -14,10 +14,11 @@ jobs:
         image: mysql:8
         env:
           MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: laravel
+          MYSQL_DATABASE: rapid_cms_test
         ports:
           - 3306:3306
         options: >-
+          --network-alias mysql
           --health-cmd="mysqladmin ping --silent"
           --health-interval=10s
           --health-timeout=5s
@@ -58,9 +59,10 @@ jobs:
       - name: Configure Laravel for MySQL and Typesense
         run: |
           # Use MySQL
-          sed -i "s|DB_HOST=127.0.0.1|DB_HOST=mysql|" .env
-          sed -i "s|DB_USERNAME=.*|DB_USERNAME=root|" .env
-          sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=root|" .env
+          sed -i "s|DB_HOST=.*|DB_HOST=127.0.0.1|" .env
+            sed -i "s|DB_PORT=.*|DB_PORT=3306|" .env
+            sed -i "s|DB_USERNAME=.*|DB_USERNAME=root|" .env
+            sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=root|" .env
 
           # Leave default DB_CONNECTION=mysql and port 3306
           
