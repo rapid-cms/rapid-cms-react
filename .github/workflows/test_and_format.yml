@@ -1,0 +1,167 @@
+name: Test and Format Code
+
+on:
+  pull_request:
+    types: [ opened, synchronize, reopened, ready_for_review ]
+
+jobs:
+  laravel-tests:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: rapid_cms_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      typesense:
+        image: typesense/typesense:28.0
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Start Typesense
+        run: |
+          docker run -d \
+            -p 8108:8108 \
+            --name typesense \
+            -v /tmp/typesense:/data \
+            typesense/typesense:28.0 \
+            --api-key=xyz \
+            --data-dir /data \
+            --enable-cors
+
+      - name: Curl Typesense
+        run: sleep 1 && curl http://localhost:8108/health
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo, pdo_mysql, bcmath, exif, gd
+          coverage: none
+
+      - name: Copy .env
+        run: cp .env.example .env
+
+      - name: Configure Laravel for MySQL and Typesense
+        run: |
+          # Use MySQL instead of pgsql
+          sed -i "s|DB_HOST=127.0.0.1|DB_HOST=mysql|" .env
+          sed -i "s|DB_USERNAME=.*|DB_USERNAME=root|" .env
+          sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=root|" .env
+
+          # Leave default DB_CONNECTION=mysql and port 3306
+          
+          # Configure queue
+          sed -i "s|QUEUE_CONNECTION=database|QUEUE_CONNECTION=sync|" .env
+
+          # Configure Typesense
+          echo "TYPESENSE_PROTOCOL=http" >> .env
+          sed -i "s|TYPESENSE_API_KEY=LARAVEL-HERD|TYPESENSE_API_KEY=xyz|" .env
+
+      - name: Display .env
+        run: cat .env
+
+      - name: Install Dependencies
+        run: composer install -q -o --no-ansi --no-interaction --no-progress --prefer-dist
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        run: npm ci && npm run build
+
+      - name: Directory Permissions
+        run: chmod -R 777 storage bootstrap/cache
+
+      - name: Disable AppArmor
+        run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+
+      - name: Prep environment
+        run: |
+          php artisan key:generate
+          php artisan migrate --force
+
+      - name: Run Tests
+        run: php artisan test
+
+  format-code:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Get changed PHP files
+        id: changed-php-files
+        uses: tj-actions/changed-files@v45
+        with:
+          files: |
+            **/*.php
+
+      - name: Setup PHP
+        if: steps.changed-php-files.outputs.any_changed == 'true'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.4
+          extensions: json, dom, curl, libxml, mbstring
+          coverage: none
+
+      - name: Install Pint
+        if: steps.changed-php-files.outputs.any_changed == 'true'
+        run: composer global require laravel/pint
+
+      - name: Run Pint
+        if: steps.changed-php-files.outputs.any_changed == 'true'
+        run: |
+          pint ${{ steps.changed-php-files.outputs.all_changed_files }}
+
+      - name: Get changed frontend files for formatting
+        id: changed-frontend-files
+        uses: tj-actions/changed-files@v45
+        with:
+          files: |
+            resources/**/*.{js,vue}
+
+      - name: Setup Node
+        if: steps.changed-frontend-files.outputs.any_changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        if: steps.changed-frontend-files.outputs.any_changed == 'true'
+        run: npm i
+
+      - name: Run Prettier
+        if: steps.changed-frontend-files.outputs.any_changed == 'true'
+        run: |
+          npx prettier --write ${{ steps.changed-frontend-files.outputs.all_changed_files }} "tests/e2e/**/*.{js,ts}"
+
+      - name: Run ESLint
+        if: steps.changed-frontend-files.outputs.any_changed == 'true'
+        run: |
+          npx eslint ${{ steps.changed-frontend-files.outputs.all_changed_files }} --fix
+
+      - name: Commit linted files
+        if: steps.changed-php-files.outputs.any_changed == 'true'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: '[Bot] Format and apply lint fixes'
